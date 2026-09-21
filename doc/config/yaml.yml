@@ -77,10 +77,42 @@ message_db:
   username: postal
   # The MariaDB password
   password: 
+  # The database to connect to for engines which need one: the PostgreSQL database which holds each server's schema, or the directory holding the per-server files for SQLite. Not used by MySQL/MariaDB, which keeps each server in its own database.
+  database: 
   # The encoding to use when connecting to the MariaDB database
   encoding: utf8mb4
   # The MariaDB prefix to add to database names
   database_name_prefix: postal
+  # The maximum number of bytes from a raw message stored in a single database row (in bytes). Larger messages are split across multiple rows so that no single query exceeds the server's max_allowed_packet limit. Lower this if your database server uses a small max_allowed_packet.
+  raw_message_chunk_size: 4194304
+  # The database engine used for the per-server message databases. Either 'mysql' (MySQL/MariaDB), 'postgresql' or 'sqlite'.
+  adapter: mysql
+
+blob_store:
+  # Where the bodies of large raw messages are stored. The scheme selects the backend: 'inline://' (the default) keeps them in the message database, 'filesystem:///var/lib/postal/blobs?depth=2' writes them to disk, and 's3://bucket/prefix' uses an S3-compatible bucket.
+  url: inline://
+  # The minimum size of a message body (in bytes) before it is stored in the blob store rather than inline in the message database
+  threshold: 1048576
+
+analytics:
+  # Where the daily analytics extract is written. The scheme selects the sink: 'duckdb:///var/lib/postal/analytics' (embedded), 'clickhouse://user:pass@host:8123/database', 'prometheus+http://host:8428' or 'influx+http://host:8086/database'. Leave unset to disable analytics.
+  url: 
+
+live_stats:
+  # Where the live statistics (the last 60 minutes of message counts, shown on Postal's own dashboard) are kept. The scheme selects the store: 'mysql://' (the default) keeps them in the message database, 'valkey://host:6379/0' and 'aerospike://host:3000/namespace/set' use an in-memory store, and 'prometheus+http://host:8428' uses a time-series store which can also stream to the dashboard as messages flow.
+  url: mysql://
+  # The number of seconds of recent statistics a live query covers
+  window: 3600
+
+telemetry:
+  # Where Postal pushes metrics and events as they happen, for external dashboards and alerting. The scheme selects the protocol and endpoint: 'prometheus+http://host:8428' (VictoriaMetrics, Prometheus and compatible stores), 'influx+http://host:8086/database', 'graphite+http://host:2003' or 'json+http://host:8686' (for example a vector.dev http_server source). Unset to disable telemetry.
+  url: 
+  # The number of seconds between telemetry flushes
+  interval: 15
+  # The maximum number of telemetry samples sent in a single request
+  batch_size: 1000
+  # The maximum number of telemetry samples buffered in memory before the oldest are dropped
+  queue_size: 10000
 
 logging:
   # Enable the default Rails logger

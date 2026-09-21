@@ -24,6 +24,11 @@ ActiveSupport::Inflector.inflections(:en) do |inflect|
   inflect.acronym "DNS"
   inflect.acronym "SSL"
   inflect.acronym "MySQL"
+  inflect.acronym "PostgreSQL"
+  inflect.acronym "DuckDB"
+  inflect.acronym "ClickHouse"
+  inflect.acronym "SQLite"
+  inflect.acronym "VictoriaMetrics"
 
   inflect.acronym "DB"
   inflect.acronym "IP"

@@ -54,7 +54,9 @@ module MessageDequeuer
     end
 
     def increment_live_stats
-      queued_message.message.database.live_stats.increment(queued_message.message.scope)
+      scope = queued_message.message.scope
+      queued_message.message.database.live_stats.increment(scope)
+      Postal::Telemetry.increment("postal_messages_total", type: scope)
     end
 
     def hold_if_server_development_mode
@@ -81,11 +83,15 @@ module MessageDequeuer
                                     sent_with_ssl: @result.secure,
                                     log_id: @result.log_id,
                                     time: @result.time
+
+      Postal::Telemetry.increment("postal_deliveries_total", result: @result.type)
     end
 
     def handle_exception(exception)
       log "internal error: #{exception.class}: #{exception.message}"
       exception.backtrace.each { |line| log(line) }
+
+      Postal::Telemetry.increment("postal_delivery_errors_total")
 
       queued_message.retry_later unless queued_message.destroyed?
       log "message requeued for trying later, at #{queued_message.retry_after}"

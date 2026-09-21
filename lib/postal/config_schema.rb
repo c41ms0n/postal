@@ -201,6 +201,12 @@ module Postal
         description "The MariaDB password"
       end
 
+      string :database do
+        description "The database to connect to for engines which need one: the PostgreSQL database " \
+                    "which holds each server's schema, or the directory holding the per-server files " \
+                    "for SQLite. Not used by MySQL/MariaDB, which keeps each server in its own database."
+      end
+
       string :encoding do
         description "The encoding to use when connecting to the MariaDB database"
         default "utf8mb4"
@@ -209,6 +215,89 @@ module Postal
       string :database_name_prefix do
         description "The MariaDB prefix to add to database names"
         default "postal"
+      end
+
+      integer :raw_message_chunk_size do
+        description "The maximum number of bytes from a raw message stored in a single database row " \
+                    "(in bytes). Larger messages are split across multiple rows so that no single query " \
+                    "exceeds the server's max_allowed_packet limit. Lower this if your database server " \
+                    "uses a small max_allowed_packet."
+        default 4 * 1024 * 1024
+      end
+
+      string :adapter do
+        description "The database engine used for the per-server message databases. Either 'mysql' " \
+                    "(MySQL/MariaDB), 'postgresql' or 'sqlite'."
+        default "mysql"
+      end
+    end
+
+    group :blob_store do
+      string :url do
+        description "Where the bodies of large raw messages are stored. The scheme selects the " \
+                    "backend: 'inline://' (the default) keeps them in the message database, " \
+                    "'filesystem:///var/lib/postal/blobs?depth=2' writes them to disk, and " \
+                    "'s3://bucket/prefix' uses an S3-compatible bucket."
+        default "inline://"
+      end
+
+      integer :threshold do
+        description "The minimum size of a message body (in bytes) before it is stored in the blob " \
+                    "store rather than inline in the message database"
+        default 1 * 1024 * 1024
+      end
+    end
+
+    group :analytics do
+      string :url do
+        description "Where the daily analytics extract is written. The scheme selects the sink: " \
+                    "'duckdb:///var/lib/postal/analytics' (embedded), " \
+                    "'clickhouse://user:pass@host:8123/database', 'prometheus+http://host:8428' or " \
+                    "'influx+http://host:8086/database'. Leave unset to disable analytics."
+      end
+    end
+
+    group :live_stats do
+      string :url do
+        description "Where the live statistics (the last 60 minutes of message counts, shown on " \
+                    "Postal's own dashboard) are kept. The scheme selects the store: 'mysql://' (the " \
+                    "default) keeps them in the message database, 'valkey://host:6379/0' and " \
+                    "'aerospike://host:3000/namespace/set' use an in-memory store, and " \
+                    "'prometheus+http://host:8428' uses a time-series store which can also stream to " \
+                    "the dashboard as messages flow."
+        default "mysql://"
+      end
+
+      integer :window do
+        description "The number of seconds of recent statistics a live query covers"
+        default 3600
+      end
+    end
+
+    group :telemetry do
+      string :url do
+        description "Where Postal pushes metrics and events as they happen, for external dashboards " \
+                    "and alerting. The scheme selects the protocol and endpoint: " \
+                    "'prometheus+http://host:8428' (VictoriaMetrics, Prometheus and compatible " \
+                    "stores), 'influx+http://host:8086/database', 'graphite+http://host:2003' or " \
+                    "'json+http://host:8686' (for example a vector.dev http_server source). Unset to " \
+                    "disable telemetry."
+      end
+
+      integer :interval do
+        description "The number of seconds between telemetry flushes"
+        default 15
+      end
+
+      integer :batch_size do
+        description "The maximum number of telemetry samples sent in a single request"
+        default 1000
+      end
+
+      integer :queue_size do
+        description "The maximum number of telemetry samples buffered in memory before the oldest " \
+                    "are dropped"
+        default 10_000
       end
     end
 

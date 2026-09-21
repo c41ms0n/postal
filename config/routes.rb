@@ -7,6 +7,9 @@ Rails.application.routes.draw do
   match "/api/v1/messages/message" => "legacy_api/messages#message", via: [:get, :post, :patch, :put]
   match "/api/v1/messages/deliveries" => "legacy_api/messages#deliveries", via: [:get, :post, :patch, :put]
 
+  # Reactive statistics stream (Server-Sent Events)
+  get "/stats/stream" => "stats#stream", as: :stats_stream
+
   scope "org/:org_permalink", as: "organization" do
     resources :domains, only: [:index, :new, :create, :destroy] do
       match :verify, on: :member, via: [:get, :post]

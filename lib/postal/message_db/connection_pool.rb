@@ -18,7 +18,7 @@ module Postal
           connection = checkout
 
           yield connection
-        rescue Mysql2::Error => e
+        rescue dialect.error_class => e
           if e.message =~ /(lost connection|gone away|not connected)/i
             # If the connection has failed for a connectivity reason
             # we won't add it back in to the pool so that it'll reconnect
@@ -39,6 +39,14 @@ module Postal
       end
 
       private
+
+      #
+      # The dialect for the configured adapter. Used for driver-specific
+      # connection handling and error detection.
+      #
+      def dialect
+        @dialect ||= Dialects::Registry.for(Postal::Config.message_db.adapter)
+      end
 
       def checkout
         @lock.synchronize do
@@ -62,13 +70,7 @@ module Postal
       end
 
       def establish_connection
-        Mysql2::Client.new(
-          host: Postal::Config.message_db.host,
-          username: Postal::Config.message_db.username,
-          password: Postal::Config.message_db.password,
-          port: Postal::Config.message_db.port,
-          encoding: Postal::Config.message_db.encoding
-        )
+        Dialects::Registry.for(Postal::Config.message_db.adapter).connect(Postal::Config.message_db)
       end
 
     end

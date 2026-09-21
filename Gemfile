@@ -26,6 +26,7 @@ gem "nifty-utils"
 gem "nilify_blanks"
 gem "nio4r"
 gem "ostruct"
+gem "pg"
 gem "prometheus-client"
 gem "puma"
 gem "rackup"
@@ -64,4 +65,35 @@ group :test do
   gem "shoulda-matchers"
   gem "timecop"
   gem "webmock"
+end
+
+# Optional analytics: an embedded OLAP engine used to mirror statistics
+# extracts. It needs the DuckDB C library in the image, so it is not installed
+# by default. Enable it with `bundle config set --local with analytics`.
+group :analytics, optional: true do
+  gem "duckdb"
+end
+
+# Optional in-memory store for the live statistics. Enable it with
+# `bundle config set --local with valkey`.
+group :valkey, optional: true do
+  gem "redis-client"
+end
+
+# Optional Aerospike store for the live statistics. Enable it with
+# `bundle config set --local with aerospike`.
+group :aerospike, optional: true do
+  gem "aerospike"
+end
+
+# Optional SQLite adapter for the message database. Enable it with
+# `bundle config set --local with sqlite`.
+group :sqlite, optional: true do
+  gem "sqlite3"
+end
+
+# Optional S3-compatible blob store backend. Enable it with
+# `bundle config set --local with s3`.
+group :s3, optional: true do
+  gem "aws-sdk-s3"
 end
