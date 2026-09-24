@@ -140,6 +140,18 @@ This document contains all the environment variables which are available for thi
 | `PROTECTION_WEB_LOGIN_FAILURES_PERIOD` | Integer | The period, in seconds, over which failed web login attempts are counted | 300 |
 | `PROTECTION_WEB_PASSWORD_RESET_LIMIT` | Integer | The number of password reset requests allowed for one e-mail address, and from one client address, before they are refused | 5 |
 | `PROTECTION_WEB_PASSWORD_RESET_PERIOD` | Integer | The period, in seconds, over which password reset requests are counted | 900 |
+| `PROTECTION_QUOTA_STORE` | String | Where quota counters are kept. Defaults to the value of counter_store, so quotas share the same store as the failure counters unless isolated here. Accepts the same memory://, redis:// and valkey:// URLs |  |
+| `PROTECTION_QUOTA_EXCEED_ACTION` | String | What happens when a quota is exceeded: reject refuses the request, defer queues it for a later retry where the caller supports it | reject |
+| `PROTECTION_API_SEND_LIMIT` | Integer | The number of API requests allowed per credential within the period (0 for no limit) | 0 |
+| `PROTECTION_API_SEND_PERIOD` | Integer | The period, in seconds, over which API requests per credential are counted | 3600 |
+| `PROTECTION_SMTP_SEND_LIMIT` | Integer | The number of messages allowed per SMTP credential within the period (0 for no limit) | 0 |
+| `PROTECTION_SMTP_SEND_PERIOD` | Integer | The period, in seconds, over which messages per SMTP credential are counted | 3600 |
+| `PROTECTION_SMTP_IP_SEND_LIMIT` | Integer | The number of messages allowed per SMTP-IP credential within the period (0 for no limit) | 0 |
+| `PROTECTION_SMTP_IP_SEND_PERIOD` | Integer | The period, in seconds, over which messages per SMTP-IP credential are counted | 3600 |
+| `PROTECTION_RESET_REDEEM_LIMIT` | Integer | The number of password reset redemptions allowed per client address before they are refused (0 for no limit) | 0 |
+| `PROTECTION_RESET_REDEEM_PERIOD` | Integer | The period, in seconds, over which password reset redemptions are counted | 900 |
+| `PROTECTION_UNAUTH_INTAKE_LIMIT` | Integer | The number of unauthenticated intake deliveries allowed per client address within the period (0 for no limit) | 0 |
+| `PROTECTION_UNAUTH_INTAKE_PERIOD` | Integer | The period, in seconds, over which unauthenticated intake deliveries are counted | 3600 |
 | `SESSIONS_INACTIVITY_TIMEOUT` | Integer | How long a session may sit unused, in seconds, before it is refused | 43200 |
 | `SESSIONS_PERSISTENT_LENGTH` | Integer | How long a remembered login lasts, in seconds | 5184000 |
 | `SESSIONS_SUDO_TIMEOUT` | Integer | How long a session may act, in seconds, after a password is confirmed | 600 |

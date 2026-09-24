@@ -315,6 +315,30 @@ protection:
   web_password_reset_limit: 5
   # The period, in seconds, over which password reset requests are counted
   web_password_reset_period: 900
+  # Where quota counters are kept. Defaults to the value of counter_store, so quotas share the same store as the failure counters unless isolated here. Accepts the same memory://, redis:// and valkey:// URLs
+  quota_store: 
+  # What happens when a quota is exceeded: reject refuses the request, defer queues it for a later retry where the caller supports it
+  quota_exceed_action: reject
+  # The number of API requests allowed per credential within the period (0 for no limit)
+  api_send_limit: 0
+  # The period, in seconds, over which API requests per credential are counted
+  api_send_period: 3600
+  # The number of messages allowed per SMTP credential within the period (0 for no limit)
+  smtp_send_limit: 0
+  # The period, in seconds, over which messages per SMTP credential are counted
+  smtp_send_period: 3600
+  # The number of messages allowed per SMTP-IP credential within the period (0 for no limit)
+  smtp_ip_send_limit: 0
+  # The period, in seconds, over which messages per SMTP-IP credential are counted
+  smtp_ip_send_period: 3600
+  # The number of password reset redemptions allowed per client address before they are refused (0 for no limit)
+  reset_redeem_limit: 0
+  # The period, in seconds, over which password reset redemptions are counted
+  reset_redeem_period: 900
+  # The number of unauthenticated intake deliveries allowed per client address within the period (0 for no limit)
+  unauth_intake_limit: 0
+  # The period, in seconds, over which unauthenticated intake deliveries are counted
+  unauth_intake_period: 3600
 
 sessions:
   # How long a session may sit unused, in seconds, before it is refused

@@ -64,6 +64,49 @@ RSpec.describe "Rate limiting", type: :request do
 
       expect(response.parsed_body["data"]["code"]).to eq "InvalidServerAPIKey"
     end
+
+    describe "per-credential send quotas" do
+      before do
+        allow(Postal::Config.protection).to receive(:api_send_limit).and_return(2)
+        allow(Postal::Config.protection).to receive(:api_send_period).and_return(300)
+      end
+
+      it "refuses a credential which has spent its allowance and says when to retry" do
+        credential = create(:credential, type: "API", server: create(:server))
+
+        2.times do
+          post_message_with_key(credential.key)
+          expect(response.parsed_body["data"]["code"]).not_to eq "RateLimited"
+        end
+
+        post_message_with_key(credential.key)
+
+        expect(response.parsed_body["data"]["code"]).to eq "RateLimited"
+        expect(response.headers["Retry-After"]).to eq "300"
+      end
+
+      it "counts each credential separately" do
+        first = create(:credential, type: "API", server: create(:server))
+        second = create(:credential, type: "API", server: first.server)
+
+        2.times { post_message_with_key(first.key) }
+        post_message_with_key(first.key)
+        expect(response.parsed_body["data"]["code"]).to eq "RateLimited"
+
+        post_message_with_key(second.key)
+        expect(response.parsed_body["data"]["code"]).not_to eq "RateLimited"
+      end
+
+      it "does nothing while the quota is disabled" do
+        allow(Postal::Config.protection).to receive(:api_send_limit).and_return(0)
+        credential = create(:credential, type: "API", server: create(:server))
+
+        4.times do
+          post_message_with_key(credential.key)
+          expect(response.parsed_body["data"]["code"]).not_to eq "RateLimited"
+        end
+      end
+    end
   end
 
   describe "web login" do

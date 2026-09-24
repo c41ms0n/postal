@@ -245,6 +245,96 @@ module Postal
         expect { described_class.store }.to raise_error(described_class::Error)
       end
     end
+
+    describe "choosing a quota store" do
+      it "falls back to the counter store when no quota store is configured" do
+        allow(Postal::Config.protection).to receive(:quota_store).and_return("")
+        allow(Postal::Config.protection).to receive(:counter_store).and_return("redis://example.com:6379/0")
+        described_class.reset!
+
+        expect(described_class.quota_store).to be_a(described_class::Shared)
+      end
+
+      it "builds an isolated store when a quota store is configured" do
+        allow(Postal::Config.protection).to receive(:quota_store).and_return("redis://quota.example.com:6379/0")
+        allow(Postal::Config.protection).to receive(:counter_store).and_return("memory://")
+        described_class.reset!
+
+        expect(described_class.quota_store).to be_a(described_class::Shared)
+        expect(described_class.store).to be_a(described_class::Memory)
+      end
+    end
+
+    describe ".check_quota" do
+      let(:credential) { instance_double(Credential, id: 42, options: {}) }
+
+      before do
+        allow(Postal::Config.protection).to receive(:api_send_limit).and_return(2)
+        allow(Postal::Config.protection).to receive(:api_send_period).and_return(60)
+        allow(Postal::Config.protection).to receive(:reset_redeem_limit).and_return(2)
+        allow(Postal::Config.protection).to receive(:reset_redeem_period).and_return(60)
+        described_class.quota_store = described_class::Memory.new
+      end
+
+      it "counts uses per credential and refuses past the limit" do
+        2.times { expect(described_class.check_quota(:api_send, credential)).to be_allowed }
+
+        result = described_class.check_quota(:api_send, credential)
+        expect(result).to be_exceeded
+        expect(result.retry_after).to be_between(1, 60)
+      end
+
+      it "namespaces quota keys with the configured prefix" do
+        expect(described_class.quota_store).to receive(:increment)
+          .with("postal:limits:api-send:credential:42", limit: 2, period: 60)
+          .and_return(described_class::Result.new(1, 2, 0))
+
+        described_class.check_quota(:api_send, credential)
+      end
+
+      it "does nothing when the quota is disabled" do
+        allow(Postal::Config.protection).to receive(:api_send_limit).and_return(0)
+        expect(described_class.quota_store).not_to receive(:increment)
+
+        expect(described_class.check_quota(:api_send, credential)).to eq described_class::UNLIMITED
+      end
+
+      it "does nothing while protection is switched off" do
+        allow(Postal::Config.protection).to receive(:enabled).and_return(false)
+        expect(described_class.quota_store).not_to receive(:increment)
+
+        expect(described_class.check_quota(:api_send, credential)).to eq described_class::UNLIMITED
+      end
+
+      it "honours a per-credential limit override" do
+        allow(credential).to receive(:options).and_return({ "send_limit" => 1 })
+
+        expect(described_class.check_quota(:api_send, credential)).to be_allowed
+        expect(described_class.check_quota(:api_send, credential)).to be_exceeded
+      end
+
+      it "honours a per-credential period override" do
+        allow(credential).to receive(:options).and_return({ "send_limit" => 5, "send_period" => 120 })
+        expect(described_class.quota_store).to receive(:increment)
+          .with("postal:limits:api-send:credential:42", limit: 5, period: 120)
+          .and_return(described_class::Result.new(1, 5, 0))
+
+        described_class.check_quota(:api_send, credential)
+      end
+
+      it "falls back safely when the options are not a hash" do
+        allow(credential).to receive(:options).and_return(nil)
+
+        2.times { expect(described_class.check_quota(:api_send, credential)).to be_allowed }
+        expect(described_class.check_quota(:api_send, credential)).to be_exceeded
+      end
+
+      it "counts token redemption per client address" do
+        2.times { expect(described_class.check_quota(:reset_redeem, "1.2.3.4")).to be_allowed }
+        expect(described_class.check_quota(:reset_redeem, "1.2.3.4")).to be_exceeded
+        expect(described_class.check_quota(:reset_redeem, "5.6.7.8")).to be_allowed
+      end
+    end
   end
 
 end

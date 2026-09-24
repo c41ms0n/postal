@@ -790,6 +790,75 @@ module Postal
         description "The period, in seconds, over which password reset requests are counted"
         default 900
       end
+
+      string :quota_store do
+        description "Where quota counters are kept. Defaults to the value of counter_store, so " \
+                    "quotas share the same store as the failure counters unless isolated here. " \
+                    "Accepts the same memory://, redis:// and valkey:// URLs"
+      end
+
+      string :quota_exceed_action do
+        description "What happens when a quota is exceeded: reject refuses the request, defer " \
+                    "queues it for a later retry where the caller supports it"
+        default "reject"
+        transform do |value|
+          unless value.nil? || %w[reject defer].include?(value.to_s)
+            raise Konfig::Error, "protection.quota_exceed_action must be reject or defer (got #{value})"
+          end
+
+          value&.to_s
+        end
+      end
+
+      integer :api_send_limit do
+        description "The number of API requests allowed per credential within the period (0 for no limit)"
+        default 0
+      end
+
+      integer :api_send_period do
+        description "The period, in seconds, over which API requests per credential are counted"
+        default 3600
+      end
+
+      integer :smtp_send_limit do
+        description "The number of messages allowed per SMTP credential within the period (0 for no limit)"
+        default 0
+      end
+
+      integer :smtp_send_period do
+        description "The period, in seconds, over which messages per SMTP credential are counted"
+        default 3600
+      end
+
+      integer :smtp_ip_send_limit do
+        description "The number of messages allowed per SMTP-IP credential within the period (0 for no limit)"
+        default 0
+      end
+
+      integer :smtp_ip_send_period do
+        description "The period, in seconds, over which messages per SMTP-IP credential are counted"
+        default 3600
+      end
+
+      integer :reset_redeem_limit do
+        description "The number of password reset redemptions allowed per client address before they are refused (0 for no limit)"
+        default 0
+      end
+
+      integer :reset_redeem_period do
+        description "The period, in seconds, over which password reset redemptions are counted"
+        default 900
+      end
+
+      integer :unauth_intake_limit do
+        description "The number of unauthenticated intake deliveries allowed per client address within the period (0 for no limit)"
+        default 0
+      end
+
+      integer :unauth_intake_period do
+        description "The period, in seconds, over which unauthenticated intake deliveries are counted"
+        default 3600
+      end
     end
 
     group :sessions do

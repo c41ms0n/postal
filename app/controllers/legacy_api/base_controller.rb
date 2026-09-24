@@ -105,6 +105,30 @@ module LegacyAPI
       @current_credential = credential
     end
 
+    # Count one use against this credential's send quota and refuse when it is
+    # spent. Quotas default to unlimited, so this is a no-op until configured.
+    # Call after authentication, before doing the work.
+    #
+    # @return [Boolean] true when the request was refused
+    def api_quota_exceeded?
+      result = Postal::RateLimiter.check_quota(:api_send, @current_credential)
+      return false unless result.exceeded?
+
+      quota_exceeded!("Too many API requests for this credential. Please try again later.", result.retry_after)
+      true
+    end
+
+    # Refuse with the same shape as the authentication limiter, quoting the
+    # quota's own retry delay, and record the refusal for observability.
+    #
+    # @return [void]
+    def quota_exceeded!(message, retry_after)
+      response.headers["Retry-After"] = retry_after.to_s
+      Postal::Telemetry.increment("postal_quota_exceeded_total", type: "api")
+      Postal::Metrics.record("postal_quota_exceeded_total", { type: "api" }, 1)
+      render_error "RateLimited", message: message
+    end
+
     # Count this authentication attempt against the calling address and report
     # whether its allowance has been spent.
     #

@@ -268,6 +268,46 @@ module SMTPServer
       Postal::RateLimiter.clear("smtp-auth:#{@ip_address}")
     end
 
+    #
+    # Count one message against this credential's send quota, refusing with a
+    # temporary failure when it is spent. Quotas default to unlimited. The
+    # quota name selects the per-credential allowance: :smtp_send for SMTP
+    # credentials, :smtp_ip_send for matched SMTP-IP credentials.
+    #
+    # @return [Array, nil] the reply triplet when refused, nil when allowed
+    #
+    def send_quota_refusal(quota_name)
+      return nil if @credential.nil?
+
+      result = Postal::RateLimiter.check_quota(quota_name, @credential)
+      return nil unless result.exceeded?
+
+      quota_exceeded_metric(quota_name)
+      logger&.warn "Refusing message from #{@ip_address}: #{quota_name} quota spent for credential #{@credential.id}"
+      increment_error_count("quota-exceeded")
+      [421, "4.7.0", "Too many messages for this credential, try again later"]
+    end
+
+    #
+    # Count one unauthenticated intake delivery against the client address and
+    # kind (bounce, route or TLS report), refusing when the allowance is spent.
+    #
+    # @return [Array, nil] the reply triplet when refused, nil when allowed
+    #
+    def unauth_intake_refusal(kind)
+      result = Postal::RateLimiter.check_quota(:unauth_intake, @ip_address, kind)
+      return nil unless result.exceeded?
+
+      quota_exceeded_metric(:unauth_intake)
+      logger&.warn "Refusing #{kind} intake from #{@ip_address}: allowance spent"
+      [421, "4.7.0", "Too many messages, try again later"]
+    end
+
+    def quota_exceeded_metric(quota_name)
+      Postal::Telemetry.increment("postal_quota_exceeded_total", type: quota_name.to_s)
+      Postal::Metrics.record("postal_quota_exceeded_total", { type: quota_name.to_s }, 1)
+    end
+
     def proxy(data)
       # inet-protocol, client-ip, proxy-ip, client-port, proxy-port
       if m = data.match(/\APROXY (\S+) (\S+) (\S+) (\S+) (\S+)\z/)
@@ -738,6 +778,13 @@ module SMTPServer
           increment_error_count("from-name-invalid")
           return reply(530, "5.7.1", "From/Sender name is not valid")
         end
+
+        quota_name = @credential.type == "SMTP-IP" ? :smtp_ip_send : :smtp_send
+        if (refusal = send_quota_refusal(quota_name))
+          transaction_reset
+          @state = :welcomed
+          return reply(*refusal)
+        end
       end
 
       @recipients.each do |recipient|
@@ -760,6 +807,11 @@ module SMTPServer
 
         when :bounce
           increment_message_count("bounce")
+          if (refusal = unauth_intake_refusal("bounce"))
+            transaction_reset
+            @state = :welcomed
+            return reply(*refusal)
+          end
           if rp_route = server.routes.where(name: "__returnpath__").first
             # If there's a return path route, we can use this to create the message
             rp_route.create_messages do |msg|
@@ -784,10 +836,20 @@ module SMTPServer
         when :tls_report
           # The third element of the recipient is the domain for this type.
           increment_message_count("tls_report")
+          if (refusal = unauth_intake_refusal("tls_report"))
+            transaction_reset
+            @state = :welcomed
+            return reply(*refusal)
+          end
           ::TLSReport.ingest(server, @data)
 
         when :route
           increment_message_count("incoming")
+          if (refusal = unauth_intake_refusal("route"))
+            transaction_reset
+            @state = :welcomed
+            return reply(*refusal)
+          end
           options[:route].create_messages do |msg|
             msg.rcpt_to = rcpt_to
             msg.mail_from = @mail_from

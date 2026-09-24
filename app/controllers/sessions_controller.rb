@@ -59,6 +59,11 @@ class SessionsController < ApplicationController
   end
 
   def finish_password_reset
+    if reset_redeem_rate_limited?
+      redirect_to login_path(return_to: params[:return_to]), alert: "Too many password reset attempts. Please try again later."
+      return
+    end
+
     @user = User.where(password_reset_token: params[:token]).where("password_reset_token_valid_until > ?", Time.now).first
     if @user.nil?
       redirect_to login_path(return_to: params[:return_to]), alert: "This link has expired or never existed. Please choose reset password to try again."
@@ -164,6 +169,14 @@ class SessionsController < ApplicationController
   # @return [String]
   def password_reset_address_key
     "web-password-reset-address:#{params[:email_address].to_s.downcase.first(255)}"
+  end
+
+  # Count this redemption attempt against the client address before the token
+  # is looked up, so the lookup cannot be used as an oracle at volume.
+  #
+  # @return [Boolean]
+  def reset_redeem_rate_limited?
+    Postal::RateLimiter.check_quota(:reset_redeem, request.remote_ip).exceeded?
   end
 
   def require_local_authentication
