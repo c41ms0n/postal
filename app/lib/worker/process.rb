@@ -36,10 +36,13 @@ module Worker
       ActionDeletionsScheduledTask,
       CheckAllDNSScheduledTask,
       CleanupAuthieSessionsScheduledTask,
+      DKIMKeyChangeScheduledTask,
       ExpireHeldMessagesScheduledTask,
       ProcessMessageRetentionScheduledTask,
       PruneSuppressionListsScheduledTask,
+      PruneTLSReportsScheduledTask,
       PruneWebhookRequestsScheduledTask,
+      RenewMTAStsCertificatesScheduledTask,
       SendNotificationsScheduledTask,
       TidyQueuedMessagesTask,
     ].freeze

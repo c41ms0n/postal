@@ -69,8 +69,18 @@ module LegacyAPI
     # current_credential instance variable if a token is valid. Otherwise it
     # will render an error to halt execution.
     #
+    # Attempts are counted against the calling address so that a client guessing
+    # keys is refused rather than allowed to guess indefinitely.
+    #
     # @return [void]
     def authenticate_as_server
+      if api_authentication_rate_limited?
+        response.headers["Retry-After"] = Postal::Config.protection.api_auth_failures_period.to_s
+        render_error "RateLimited",
+                     message: "Too many failed authentication attempts. Please try again later."
+        return
+      end
+
       key = request.headers["X-Server-API-Key"]
       if key.blank?
         render_error "AccessDenied",
@@ -81,8 +91,7 @@ module LegacyAPI
       credential = Credential.where(type: "API", key: key).first
       if credential.nil?
         render_error "InvalidServerAPIKey",
-                     message: "The API token provided in X-Server-API-Key was not valid.",
-                     token: key
+                     message: "The API token provided in X-Server-API-Key was not valid."
         return
       end
 
@@ -91,8 +100,24 @@ module LegacyAPI
         return
       end
 
+      Postal::RateLimiter.clear(api_authentication_key)
       credential.use
       @current_credential = credential
+    end
+
+    # Count this authentication attempt against the calling address and report
+    # whether its allowance has been spent.
+    #
+    # @return [Boolean]
+    def api_authentication_rate_limited?
+      Postal::RateLimiter.exceeded?(api_authentication_key,
+                                    limit: Postal::Config.protection.api_auth_failures_limit,
+                                    period: Postal::Config.protection.api_auth_failures_period)
+    end
+
+    # @return [String]
+    def api_authentication_key
+      "api-auth:#{request.remote_ip}"
     end
 
     # Render a successful response to the client

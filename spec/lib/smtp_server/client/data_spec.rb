@@ -10,18 +10,18 @@ module SMTPServer
 
     describe "DATA" do
       it "returns an error if no helo" do
-        expect(client.handle("DATA")).to eq "503 HELO/EHLO, MAIL FROM and RCPT TO before sending data"
+        expect(client.handle("DATA")).to eq "503 5.5.1 HELO/EHLO, MAIL FROM and RCPT TO before sending data"
       end
 
       it "returns an error if no mail from" do
         client.handle("HELO test.example.com")
-        expect(client.handle("DATA")).to eq "503 HELO/EHLO, MAIL FROM and RCPT TO before sending data"
+        expect(client.handle("DATA")).to eq "503 5.5.1 HELO/EHLO, MAIL FROM and RCPT TO before sending data"
       end
 
       it "returns an error if no rcpt to" do
         client.handle("HELO test.example.com")
         client.handle("MAIL FROM: test@example.com")
-        expect(client.handle("DATA")).to eq "503 HELO/EHLO, MAIL FROM and RCPT TO before sending data"
+        expect(client.handle("DATA")).to eq "503 5.5.1 HELO/EHLO, MAIL FROM and RCPT TO before sending data"
       end
 
       it "returns go ahead" do

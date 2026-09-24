@@ -42,6 +42,12 @@ RSpec.configure do |config|
     host! Postal::Config.postal.web_hostname
   end
 
+  # Rate limit counters live for the lifetime of the process, so every example
+  # starts with none outstanding.
+  config.before(:each) do
+    Postal::RateLimiter.reset!
+  end
+
   # Test that the factories are working as they should and then clean up before getting started on
   # the rest of the suite.
   config.before(:suite) do

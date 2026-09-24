@@ -9,6 +9,52 @@ module SMTPServer
     CRAM_MD5_DIGEST = OpenSSL::Digest.new("md5")
     LOG_REDACTION_STRING = "[redacted]"
 
+    # The longest command line we will accept, per RFC 5321 section 4.5.3.2
+    # (512 octets including CRLF). Message text is deliberately not capped: real
+    # mail routinely contains longer lines and RFC 5321 tells receivers to
+    # accept them.
+    MAX_COMMAND_LINE_LENGTH = 512
+
+    #
+    # Every ESMTP extension this server offers. `keyword` is what appears in the
+    # EHLO response, `value` is appended to it when the extension carries one
+    # (AUTH's mechanism list), and `available` decides whether the extension
+    # applies to the current session. Advertisement and enforcement both read
+    # this declaration, so the two cannot drift apart.
+    #
+    EXTENSIONS = [
+      {
+        keyword: "STARTTLS",
+        available: -> (client) { Postal::Config.smtp_server.tls_enabled? && !client.tls? }
+      },
+      {
+        keyword: "SIZE",
+        value: -> (_client) { Postal::Config.smtp_server.max_message_size.megabytes.to_i }
+      },
+      {
+        keyword: "8BITMIME"
+      },
+      {
+        keyword: "SMTPUTF8"
+      },
+      {
+        keyword: "PIPELINING"
+      },
+      {
+        keyword: "AUTH",
+        value: "CRAM-MD5 PLAIN LOGIN"
+      },
+    ].freeze
+
+    #
+    # Format a completion reply with its RFC 2034 enhanced status code. The
+    # basic code stays first, so a client that ignores enhanced codes is
+    # unaffected. Intermediate replies (334, 354) carry no enhanced code.
+    #
+    def self.reply(code, enhanced, text)
+      "#{code} #{enhanced} #{text}"
+    end
+
     attr_reader :logging_enabled
     attr_reader :credential
     attr_reader :ip_address
@@ -20,6 +66,7 @@ module SMTPServer
     def initialize(ip_address)
       @logging_enabled = true
       @ip_address = ip_address
+      @received_at = Time.now.to_i
 
       @cr_present = false
       @previous_cr_present = nil
@@ -46,6 +93,8 @@ module SMTPServer
       @mail_from = nil
       @data = nil
       @headers = nil
+      @body_type = "7BIT"
+      @smtputf8 = false
     end
 
     def trace_id
@@ -53,6 +102,16 @@ module SMTPServer
     end
 
     def handle(data)
+      @received_at = Time.now.to_i
+
+      # A command line longer than the RFC allows is rejected rather than
+      # buffered. Continuation lines for AUTH and DATA are produced by @proc and
+      # are handled by their own parsers.
+      if @proc.nil? && data.bytesize > MAX_COMMAND_LINE_LENGTH
+        increment_error_count("line-too-long")
+        return reply(500, "5.5.2", "Line too long")
+      end
+
       if data[-1] == "\r"
         @cr_present = true
         data = data.chop # remove last character (\r)
@@ -85,6 +144,21 @@ module SMTPServer
       @start_tls || false
     end
 
+    def tls?
+      @tls || false
+    end
+
+    #
+    # Has this session been quiet for longer than the configured idle timeout?
+    # A timeout of zero disables the check.
+    #
+    def expired?(now = Time.now.to_i)
+      timeout = Postal::Config.smtp_server.idle_timeout.to_i
+      return false unless timeout.positive?
+
+      @received_at + timeout < now
+    end
+
     attr_writer :start_tls
 
     def handle_command(data)
@@ -103,7 +177,7 @@ module SMTPServer
       when /^DATA/i           then data(data)
       else
         increment_error_count("invalid-command")
-        "502 Invalid/unsupported command"
+        reply(502, "5.5.2", "Invalid/unsupported command")
       end
     end
 
@@ -115,36 +189,138 @@ module SMTPServer
 
     private
 
+    def reply(code, enhanced, text)
+      self.class.reply(code, enhanced, text)
+    end
+
+    #
+    # The extensions to advertise for this session, rendered as the keywords the
+    # EHLO response carries. A value may be a proc when it depends on the
+    # session or the configuration.
+    #
+    def capabilities
+      EXTENSIONS.filter_map do |extension|
+        next if extension[:available] && !extension[:available].call(self)
+
+        value = extension[:value]
+        value = value.call(self) if value.respond_to?(:call)
+        [extension[:keyword], value].compact.join(" ")
+      end
+    end
+
+    #
+    # The address and the ESMTP parameters from a MAIL FROM or RCPT TO command.
+    # Parameters are the whitespace-separated tokens following the address,
+    # either bare ("SMTPUTF8") or valued ("SIZE=100"), returned keyed by their
+    # upper-case name.
+    #
+    def parse_envelope_command(data, command)
+      line = data.sub(/\A#{command}\s*:\s*/i, "").strip
+      address, parameters = if line.start_with?("<")
+                              address, _, rest = line.partition(">")
+                              [address.delete_prefix("<"), rest]
+                            else
+                              address, _, rest = line.partition(/\s/)
+                              [address, rest]
+                            end
+
+      parsed = {}
+      parameters.to_s.split(/\s+/).each do |token|
+        next if token.empty?
+
+        key, value = token.split("=", 2)
+        parsed[key.upcase] = value.nil? ? true : value
+      end
+      [address, parsed]
+    end
+
+    #
+    # The largest message we will accept, in bytes.
+    #
+    def max_message_size_bytes
+      Postal::Config.smtp_server.max_message_size.megabytes.to_i
+    end
+
+    #
+    # Attempts to authenticate are counted against the client's IP address. Once
+    # the allowance is spent the client is refused outright and disconnected, so
+    # a brute-force attempt cannot go on guessing while its failures are merely
+    # logged.
+    #
+    def authentication_refusal
+      result = Postal::RateLimiter.check("smtp-auth:#{@ip_address}",
+                                         limit: Postal::Config.protection.smtp_auth_attempts_limit,
+                                         period: Postal::Config.protection.smtp_auth_attempts_period)
+      return nil if result.allowed?
+
+      @finished = true
+      increment_error_count("authentication-blocked")
+      logger&.warn "Refusing further authentication attempts from #{@ip_address}"
+      reply(421, "4.7.0", "Too many failed authentication attempts, try again later")
+    end
+
+    #
+    # A client which authenticates successfully starts again with a full
+    # allowance, so a legitimate user who mistypes a password is not locked out
+    # once they get it right.
+    #
+    def clear_authentication_attempts
+      Postal::RateLimiter.clear("smtp-auth:#{@ip_address}")
+    end
+
     def proxy(data)
       # inet-protocol, client-ip, proxy-ip, client-port, proxy-port
-      if m = data.match(/\APROXY (.+) (.+) (.+) (.+) (.+)\z/)
+      if m = data.match(/\APROXY (\S+) (\S+) (\S+) (\S+) (\S+)\z/)
+        begin
+          claimed = IPAddr.new(m[2])
+        rescue IPAddr::InvalidAddressError
+          claimed = nil
+        end
+        unless claimed
+          @finished = true
+          increment_error_count("proxy-error")
+          return reply(502, "5.5.2", "Proxy Error")
+        end
+
         @ip_address = m[2]
         check_ip_address
         @state = :welcome
         logger&.debug "\e[35mClient identified as #{@ip_address}\e[0m"
         increment_command_count("PROXY")
-        return "220 #{Postal::Config.postal.smtp_hostname} ESMTP Postal/#{trace_id}"
+        return reply(220, "2.0.0", "#{Postal::Config.postal.smtp_hostname} ESMTP Postal/#{trace_id}")
       end
 
       @finished = true
       increment_error_count("proxy-error")
-      "502 Proxy Error"
+      reply(502, "5.5.2", "Proxy Error")
     end
 
     def quit
       @finished = true
-      "221 Closing Connection"
+      reply(221, "2.0.0", "Closing Connection")
     end
 
     def starttls
+      unless in_state(:welcomed)
+        increment_error_count("starttls-out-of-order")
+        return reply(503, "5.5.1", "STARTTLS not available now")
+      end
+
       if Postal::Config.smtp_server.tls_enabled?
         @start_tls = true
         @tls = true
-        increment_command_count("STARTLS")
-        "220 Ready to start TLS"
+        increment_command_count("STARTTLS")
+        # RFC 3207 section 4.2: everything learned before the handshake is
+        # discarded, so the client must introduce itself again over the
+        # encrypted channel before it can send mail.
+        @helo_name = nil
+        @credential = nil
+        transaction_reset
+        @state = :welcome
+        reply(220, "2.0.0", "Ready to start TLS")
       else
         increment_error_count("tls-unavailable")
-        "502 TLS not available"
+        reply(502, "5.5.1", "TLS not available")
       end
     end
 
@@ -153,11 +329,15 @@ module SMTPServer
       transaction_reset
       @state = :welcomed
       increment_command_count("EHLO")
-      [
-        "250-My capabilities are",
-        Postal::Config.smtp_server.tls_enabled? && !@tls ? "250-STARTTLS" : nil,
-        "250 AUTH CRAM-MD5 PLAIN LOGIN",
-      ].compact
+      extensions = capabilities
+      lines = ["250-My capabilities are"]
+      extensions.each_with_index do |extension, index|
+        # Every line but the last is continued, so the client knows the
+        # response has ended when it sees a space rather than a hyphen.
+        separator = index == extensions.size - 1 ? " " : "-"
+        lines << "250#{separator}#{extension}"
+      end
+      lines
     end
 
     def helo(data)
@@ -165,22 +345,27 @@ module SMTPServer
       transaction_reset
       @state = :welcomed
       increment_command_count("HELO")
-      "250 #{Postal::Config.postal.smtp_hostname}"
+      reply(250, "2.0.0", Postal::Config.postal.smtp_hostname)
     end
 
     def rset
       transaction_reset
       @state = :welcomed
       increment_command_count("RSET")
-      "250 OK"
+      reply(250, "2.0.0", "OK")
     end
 
     def noop
-      "250 OK"
+      reply(250, "2.0.0", "OK")
     end
 
     def auth_plain(data)
       increment_command_count("AUTH PLAIN")
+
+      unless in_state(:welcomed)
+        increment_error_count("auth-out-of-order")
+        return reply(503, "5.5.1", "AUTH not available now")
+      end
 
       handler = proc do |idata|
         @proc = nil
@@ -190,7 +375,7 @@ module SMTPServer
         password = parts[-1]
         unless username && password
           increment_error_count("missing-credentials")
-          next "535 Authenticated failed - protocol error"
+          next reply(535, "5.7.8", "Authentication failed - protocol error")
         end
 
         authenticate(password)
@@ -208,6 +393,11 @@ module SMTPServer
 
     def auth_login(data)
       increment_command_count("AUTH LOGIN")
+
+      unless in_state(:welcomed)
+        increment_error_count("auth-out-of-order")
+        return reply(503, "5.5.1", "AUTH not available now")
+      end
 
       password_handler = proc do |idata|
         @proc = nil
@@ -231,49 +421,65 @@ module SMTPServer
     end
 
     def authenticate(password)
+      if (refusal = authentication_refusal)
+        return refusal
+      end
+
       if @credential = Credential.where(type: "SMTP", key: password).first
         @credential.use
-        "235 Granted for #{@credential.server.organization.permalink}/#{@credential.server.permalink}"
+        clear_authentication_attempts
+        reply(235, "2.7.0", "Granted for #{@credential.server.organization.permalink}/#{@credential.server.permalink}")
       else
         logger&.warn "Authentication failure for #{@ip_address}"
         increment_error_count("invalid-credentials")
-        "535 Invalid credential"
+        reply(535, "5.7.8", "Invalid credential")
       end
     end
 
     def auth_cram_md5(data)
       increment_command_count("AUTH CRAM-MD5")
 
-      challenge = Digest::SHA1.hexdigest(Time.now.to_i.to_s + rand(100_000).to_s)
-      challenge = "<#{challenge[0, 20]}@#{Postal::Config.postal.smtp_hostname}>"
+      unless in_state(:welcomed)
+        increment_error_count("auth-out-of-order")
+        return reply(503, "5.5.1", "AUTH not available now")
+      end
+
+      challenge = SecureRandom.hex(16)
+      challenge = "<#{challenge}@#{Postal::Config.postal.smtp_hostname}>"
 
       handler = proc do |idata|
         @proc = nil
+        if (refusal = authentication_refusal)
+          next refusal
+        end
+
         username, password = Base64.decode64(idata).split(" ", 2).map { |a| a.chomp }
         org_permlink, server_permalink = username.split(/[\/_]/, 2)
         server = ::Server.includes(:organization).where(organizations: { permalink: org_permlink }, permalink: server_permalink).first
         if server.nil?
           logger&.warn "Authentication failure for #{@ip_address} (no server found matching #{username})"
           increment_error_count("invalid-credentials")
-          next "535 Denied"
+          next reply(535, "5.7.8", "Denied")
         end
 
         grant = nil
         server.credentials.where(type: "SMTP").each do |credential|
           correct_response = OpenSSL::HMAC.hexdigest(CRAM_MD5_DIGEST, credential.key, challenge)
-          next unless password == correct_response
+          next unless password.bytesize == correct_response.bytesize &&
+                      ActiveSupport::SecurityUtils.secure_compare(password, correct_response)
 
           @credential = credential
           @credential.use
+          clear_authentication_attempts
           logger&.debug "Authenticated with with credential #{credential.id}"
-          grant = "235 Granted for #{credential.server.organization.permalink}/#{credential.server.permalink}"
+          grant = reply(235, "2.7.0", "Granted for #{credential.server.organization.permalink}/#{credential.server.permalink}")
           break
         end
 
         if grant.nil?
           logger&.warn "Authentication failure for #{@ip_address} (invalid credential)"
           increment_error_count("invalid-credentials")
-          next "535 Denied"
+          next reply(535, "5.7.8", "Denied")
         end
 
         grant
@@ -286,40 +492,72 @@ module SMTPServer
     def mail_from(data)
       unless in_state(:welcomed, :mail_from_received)
         increment_error_count("mail-from-out-of-order")
-        return "503 EHLO/HELO first please"
+        return reply(503, "5.5.1", "EHLO/HELO first please")
       end
 
+      address, parameters = parse_envelope_command(data, "MAIL FROM")
+
+      # We don't trust a client to assert AUTH=, so the parameter is discarded
+      # rather than carried into the transaction.
+      parameters.delete("AUTH")
+
+      # RFC 6152: the client tells us whether the body is seven or eight bit. We
+      # keep the octets either way, so anything we do not recognise is refused
+      # rather than silently downgraded.
+      body = parameters["BODY"]
+      if body && body != true && !%w[7BIT 8BITMIME].include?(body.upcase)
+        increment_error_count("invalid-body-value")
+        return reply(501, "5.5.4", "Unsupported BODY value")
+      end
+      body_type = body.nil? || body == true ? "7BIT" : body.upcase
+
+      # A client which declares a size larger than we accept is refused before
+      # it sends the message rather than after.
+      declared_size = parameters["SIZE"]
+      if declared_size && declared_size != true && declared_size.to_i > max_message_size_bytes
+        increment_error_count("message-too-large")
+        return reply(552, "5.3.4",
+                     format("Message too large (maximum size %dMB)",
+                            Postal::Config.smtp_server.max_message_size))
+      end
+
+      # The transaction is only committed once the parameters have been accepted,
+      # so a refused MAIL FROM leaves the session exactly as it was.
       @state = :mail_from_received
       transaction_reset
-      if data =~ /AUTH=/
-        # Discard AUTH= parameter and anything that follows.
-        # We don't need this parameter as we don't trust any client to set it
-        mail_from_line = data.sub(/ *AUTH=.*/, "")
-      else
-        mail_from_line = data
-      end
-      @mail_from = mail_from_line.gsub(/MAIL FROM\s*:\s*/i, "").gsub(/.*</, "").gsub(/>.*/, "").strip
-      "250 OK"
+      @mail_from = address
+      @body_type = body_type
+      # RFC 6531: the client is telling us the envelope and headers may contain
+      # UTF-8. Nothing in the receive path is ASCII-restricted, so accepting the
+      # parameter is what makes it true.
+      @smtputf8 = parameters.key?("SMTPUTF8")
+      reply(250, "2.1.0", "OK")
     end
 
     def rcpt_to(data)
       unless in_state(:mail_from_received, :rcpt_to_received)
         increment_error_count("rcpt-to-out-of-order")
-        return "503 EHLO/HELO and MAIL FROM first please"
+        return reply(503, "5.5.1", "EHLO/HELO and MAIL FROM first please")
+      end
+
+      max_recipients = Postal::Config.smtp_server.max_recipients.to_i
+      if max_recipients.positive? && @recipients.size >= max_recipients
+        increment_error_count("too-many-recipients")
+        return reply(452, "4.5.3", "Too many recipients")
       end
 
       rcpt_to = data.gsub(/RCPT TO\s*:\s*/i, "").gsub(/.*</, "").gsub(/>.*/, "").strip
 
       if rcpt_to.blank?
         increment_error_count("empty-rcpt-to")
-        return "501 RCPT TO should not be empty"
+        return reply(501, "5.1.3", "RCPT TO should not be empty")
       end
 
       uname, domain = rcpt_to.split("@", 2)
 
       if domain.blank?
         increment_error_count("invalid-rcpt-to")
-        return "501 Invalid RCPT TO"
+        return reply(501, "5.1.3", "Invalid RCPT TO")
       end
 
       uname, tag = uname.split("+", 2)
@@ -330,16 +568,27 @@ module SMTPServer
         if server = ::Server.where(token: uname).first
           if server.suspended?
             increment_error_count("server-suspended")
-            "535 Mail server has been suspended"
+            reply(535, "5.7.8", "Mail server has been suspended")
           else
             logger&.debug "Added bounce on server #{server.id}"
             @recipients << [:bounce, rcpt_to, server]
-            "250 OK"
+            reply(250, "2.1.5", "OK")
           end
         else
           increment_error_count("invalid-server-token")
-          "550 Invalid server token"
+          reply(550, "5.1.1", "Invalid server token")
         end
+
+      elsif (tls_rpt_local_part = Postal::Config.dns.tls_rpt_local_part.to_s.downcase).present? &&
+            uname.to_s.downcase == tls_rpt_local_part &&
+            (report_domain = ::Domain.where(name: domain).first)
+        # Reports are consumed by the application rather than delivered, so no
+        # route is involved. The domain the report was submitted for is carried
+        # as the third element of the recipient.
+        @state = :rcpt_to_received
+        logger&.debug "Added TLS report for #{report_domain.name}"
+        @recipients << [:tls_report, rcpt_to, report_domain]
+        reply(250, "2.1.5", "OK")
 
       elsif domain == Postal::Config.dns.route_domain
         # This is an email direct to a route. This isn't actually supported yet.
@@ -347,18 +596,18 @@ module SMTPServer
         if route = Route.where(token: uname).first
           if route.server.suspended?
             increment_error_count("server-suspended")
-            "535 Mail server has been suspended"
+            reply(535, "5.7.8", "Mail server has been suspended")
           elsif route.mode == "Reject"
             increment_error_count("route-rejected")
-            "550 Route does not accept incoming messages"
+            reply(550, "5.7.1", "Route does not accept incoming messages")
           else
             logger&.debug "Added route #{route.id} to recipients (tag: #{tag.inspect})"
             actual_rcpt_to = "#{route.name}#{tag ? "+#{tag}" : ''}@#{route.domain.name}"
             @recipients << [:route, actual_rcpt_to, route.server, { route: route }]
-            "250 OK"
+            reply(250, "2.1.5", "OK")
           end
         else
-          "550 Invalid route token"
+          reply(550, "5.1.1", "Invalid route token")
         end
 
       elsif @credential
@@ -366,11 +615,11 @@ module SMTPServer
         @state = :rcpt_to_received
         if @credential.server.suspended?
           increment_error_count("server-suspended")
-          "535 Mail server has been suspended"
+          reply(535, "5.7.8", "Mail server has been suspended")
         else
           logger&.debug "Added external address '#{rcpt_to}'"
           @recipients << [:credential, rcpt_to, @credential.server]
-          "250 OK"
+          reply(250, "2.1.5", "OK")
         end
 
       elsif uname && domain && route = Route.find_by_name_and_domain(uname, domain)
@@ -378,19 +627,21 @@ module SMTPServer
         @state = :rcpt_to_received
         if route.server.suspended?
           increment_error_count("server-suspended")
-          "535 Mail server has been suspended"
+          reply(535, "5.7.8", "Mail server has been suspended")
         elsif route.mode == "Reject"
           increment_error_count("route-rejection")
-          "550 Route does not accept incoming messages"
+          reply(550, "5.7.1", "Route does not accept incoming messages")
         else
           logger&.debug "Added route #{route.id} to recipients (tag: #{tag.inspect})"
           @recipients << [:route, rcpt_to, route.server, { route: route }]
-          "250 OK"
+          reply(250, "2.1.5", "OK")
         end
 
       else
         # User is trying to relay but is not authenticated. Try to authenticate by IP address
         @credential = Credential.where(type: "SMTP-IP").all.sort_by { |c| c.ipaddr&.prefix || 0 }.reverse.find do |credential|
+          next false if credential.ipaddr.nil?
+
           credential.ipaddr.include?(@ip_address) || (credential.ipaddr.ipv4? && credential.ipaddr.ipv4_mapped.include?(@ip_address))
         end
 
@@ -401,7 +652,7 @@ module SMTPServer
         else
           increment_error_count("authentication-required")
           logger&.warn "Authentication failure for #{@ip_address}"
-          "530 Authentication required"
+          reply(530, "5.7.0", "Authentication required")
         end
       end
     end
@@ -409,14 +660,15 @@ module SMTPServer
     def data(_data)
       unless in_state(:rcpt_to_received)
         increment_error_count("data-out-of-order")
-        return "503 HELO/EHLO, MAIL FROM and RCPT TO before sending data"
+        return reply(503, "5.5.1", "HELO/EHLO, MAIL FROM and RCPT TO before sending data")
       end
 
       @data = String.new.force_encoding("BINARY")
       @headers = {}
       @receiving_headers = true
 
-      received_header = ReceivedHeader.generate(@credential&.server, @helo_name, @ip_address, :smtp)
+      received_header = ReceivedHeader.generate(@credential&.server, @helo_name, @ip_address, :smtp,
+                                                smtputf8: @smtputf8)
                                       .force_encoding("BINARY")
 
       @data << "Received: #{received_header}\r\n"
@@ -466,14 +718,15 @@ module SMTPServer
         transaction_reset
         @state = :welcomed
         increment_error_count("message-too-large")
-        return format("552 Message too large (maximum size %dMB)", Postal::Config.smtp_server.max_message_size)
+        return reply(552, "5.3.4",
+                     format("Message too large (maximum size %dMB)", Postal::Config.smtp_server.max_message_size))
       end
 
       if @headers["received"].grep(/by #{Postal::Config.postal.smtp_hostname}/).count > 4
         transaction_reset
         @state = :welcomed
         increment_error_count("loop-detected")
-        return "550 Loop detected"
+        return reply(550, "5.4.6", "Loop detected")
       end
 
       authenticated_domain = nil
@@ -483,7 +736,7 @@ module SMTPServer
           transaction_reset
           @state = :welcomed
           increment_error_count("from-name-invalid")
-          return "530 From/Sender name is not valid"
+          return reply(530, "5.7.1", "From/Sender name is not valid")
         end
       end
 
@@ -528,6 +781,11 @@ module SMTPServer
             message.bounce = 1
             message.save
           end
+        when :tls_report
+          # The third element of the recipient is the domain for this type.
+          increment_message_count("tls_report")
+          ::TLSReport.ingest(server, @data)
+
         when :route
           increment_message_count("incoming")
           options[:route].create_messages do |msg|
@@ -540,7 +798,7 @@ module SMTPServer
       end
       transaction_reset
       @state = :welcomed
-      "250 OK"
+      reply(250, "2.0.0", "OK")
     end
 
     def in_state(*states)
