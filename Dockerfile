@@ -56,8 +56,11 @@ USER postal
 RUN mkdir -p /opt/postal/app /opt/postal/config
 WORKDIR /opt/postal/app
 
-# Install bundler
-RUN gem install bundler -v 4.0.20 --no-doc
+# Install bundler. Pinned to the BUNDLED WITH version in Gemfile.lock via
+# build arg so the two cannot drift silently; override with
+# --build-arg BUNDLER_VERSION=x.y.z if the lockfile moves first.
+ARG BUNDLER_VERSION=4.0.20
+RUN gem install bundler -v "${BUNDLER_VERSION}" --no-doc
 
 # Install the latest and active gem dependencies and re-run
 # the appropriate commands to handle installs.
