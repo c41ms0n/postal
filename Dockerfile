@@ -52,6 +52,14 @@ ARG BRANCH
 RUN if [ "$VERSION" != "" ]; then echo $VERSION > VERSION; fi \
   && if [ "$BRANCH" != "" ]; then echo $BRANCH > BRANCH; fi
 
+# YJIT switch. Verified against the ruby:4.0.7 runtime: YJIT is compiled in,
+# needs no native toolchain at runtime (codegen is in-process), and only the
+# value "1" enables it -- "0", empty and unset all leave it off. Default is
+# off; pass --build-arg YJIT=1 (or -e RUBY_YJIT_ENABLE=1 at run time) to
+# enable it.
+ARG YJIT=0
+ENV RUBY_YJIT_ENABLE=${YJIT}
+
 # Set paths for when running in a container
 ENV POSTAL_CONFIG_FILE_PATH=/config/postal.yml
 
