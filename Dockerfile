@@ -8,6 +8,13 @@ RUN apt-get update \
 
 RUN (curl -sL https://deb.nodesource.com/setup_20.x | bash -)
 
+# Optional runtime libraries. jemalloc ships as a build variant rather than in
+# the default image: libjemalloc2 is ~900KB and only useful when preloaded.
+# Declaration order matters only for caching; the postal user is created
+# below, and everything apt-related stays in these root steps.
+ARG JEMALLOC=0
+ARG JEMALLOC_PROFILE=""
+
 # Install main dependencies
 RUN apt-get update && \
   apt-get install -y --no-install-recommends \
@@ -19,6 +26,7 @@ RUN apt-get update && \
     nano \
     libyaml-dev \
     nodejs \
+  $([ "$JEMALLOC" = "1" ] && echo libjemalloc2) \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
@@ -30,6 +38,20 @@ ENV PATH="/opt/postal/app/bin:${PATH}"
 
 # Setup an application
 RUN useradd -r -d /opt/postal -m -s /bin/bash -u 999 postal
+
+# File-capped binaries ignore LD_PRELOAD (glibc AT_SECURE), so the jemalloc
+# variant preloads through /etc/ld.so.preload instead -- the one mechanism
+# that survives setcap. The file is created empty (a no-op for ld.so) and
+# handed to the postal user only in this variant; the default image has
+# neither the library nor the file. Tradeoff, stated plainly: in the jemalloc
+# variant the app user can write the system preload list, so that variant
+# trusts the app user with process startup. The entrypoint only writes the
+# jemalloc path there when JEMALLOC_PROFILE is set.
+RUN if [ "$JEMALLOC" = "1" ]; then \
+      touch /etc/ld.so.preload \
+      && chown postal:postal /etc/ld.so.preload; \
+    fi
+
 USER postal
 RUN mkdir -p /opt/postal/app /opt/postal/config
 WORKDIR /opt/postal/app
@@ -59,6 +81,15 @@ RUN if [ "$VERSION" != "" ]; then echo $VERSION > VERSION; fi \
 # enable it.
 ARG YJIT=0
 ENV RUBY_YJIT_ENABLE=${YJIT}
+
+# jemalloc activation (installation is in the root apt step above). The build
+# arg controls whether the library ships; the runtime JEMALLOC_PROFILE
+# (empty = off) controls whether the entrypoint preloads it. Build with
+# --build-arg JEMALLOC=1 to ship the library, then -e
+# JEMALLOC_PROFILE=balanced (or =aggressive) to use it. See
+# lib/postal/jemalloc.rb for the profiles and the architecture-independent
+# library lookup.
+ENV JEMALLOC_PROFILE=${JEMALLOC_PROFILE}
 
 # Set paths for when running in a container
 ENV POSTAL_CONFIG_FILE_PATH=/config/postal.yml
