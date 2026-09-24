@@ -42,8 +42,9 @@ gem "resolv"
 gem "secure_headers"
 gem "securerandom"
 gem "sentry-rails"
+gem "sprockets-rails"
 gem "timeout"
-gem "turbolinks", "~> 5"
+gem "turbo-rails", "~> 2"
 gem "webrick"
 
 group :oidc do
@@ -54,10 +55,8 @@ group :oidc do
 end
 
 group :development, :test, :assets do
-  gem "coffee-rails", "~> 5.0"
-  gem "jquery-rails"
-  gem "sass-rails"
-  gem "uglifier", ">= 1.3.0"
+  gem "dartsass-rails"
+  gem "terser"
 end
 
 group :development do
