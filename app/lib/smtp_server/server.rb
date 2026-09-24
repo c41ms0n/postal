@@ -6,7 +6,7 @@ require "nio"
 module SMTPServer
   class Server
 
-    include HasPrometheusMetrics
+    include HasMetrics
 
     # How often the event loop wakes with no work to do so that connections
     # which have gone quiet can be closed.
@@ -33,7 +33,7 @@ module SMTPServer
     def initialize(options = {})
       @options = options
       @options[:debug] ||= false
-      register_prometheus_metrics
+      register_metrics
       prepare_environment
     end
 
@@ -137,7 +137,7 @@ module SMTPServer
             begin
               # Accept the connection
               new_io = io.accept
-              increment_prometheus_counter :postal_smtp_server_connections_total
+              increment_counter :postal_smtp_server_connections_total
               # Get the client's IP address and strip `::ffff:` for consistency.
               client_ip_address = new_io.remote_address.ip_address.sub(/\A::ffff:/, "")
 
@@ -180,7 +180,7 @@ module SMTPServer
               e.backtrace.each do |line|
                 logger.error line
               end
-              increment_prometheus_counter :postal_smtp_server_exceptions_total,
+              increment_counter :postal_smtp_server_exceptions_total,
                                            labels: { error: e.class.to_s, type: "client-accept" }
               begin
                 new_io.close
@@ -200,8 +200,8 @@ module SMTPServer
                 begin
                   # Can we accept the TLS connection at this time?
                   io.accept_nonblock
-                  # Increment prometheus
-                  increment_prometheus_counter :postal_smtp_server_tls_connections_total
+                  # Increment the metric
+                  increment_counter :postal_smtp_server_tls_connections_total
                   # We were able to accept the connection, the client is no longer handshaking
                   client.start_tls = false
                 rescue IO::WaitReadable, IO::WaitWritable => e
@@ -305,7 +305,7 @@ module SMTPServer
                 logger.error iline, trace_id: client_id
               end
 
-              increment_prometheus_counter :postal_smtp_server_exceptions_total,
+              increment_counter :postal_smtp_server_exceptions_total,
                                            labels: { error: e.class.to_s, type: "data" }
 
               # Close all IO and forget this client
@@ -357,7 +357,7 @@ module SMTPServer
       expired.each do |monitor|
         io = monitor.io
         monitor.value.logger&.debug "Closing connection after #{Postal::Config.smtp_server.idle_timeout}s of inactivity"
-        increment_prometheus_counter :postal_smtp_server_idle_timeouts_total
+        increment_counter :postal_smtp_server_idle_timeouts_total
         begin
           io.write(Client.reply(421, "4.4.2", "Idle timeout, closing connection") + "\r\n")
           io.flush
@@ -389,7 +389,7 @@ module SMTPServer
       reason = connection_refusal_reason(ip_address)
       return false if reason.nil?
 
-      increment_prometheus_counter :postal_smtp_server_connections_refused_total
+      increment_counter :postal_smtp_server_connections_refused_total
       logger.warn "Refusing SMTP connection from #{ip_address} (#{reason})"
       begin
         io.write(Client.reply(421, "4.7.0", "Too many connections, please try again later") + "\r\n")
@@ -427,24 +427,24 @@ module SMTPServer
       Postal.logger
     end
 
-    def register_prometheus_metrics
-      register_prometheus_counter :postal_smtp_server_connections_total,
+    def register_metrics
+      register_counter :postal_smtp_server_connections_total,
                                   docstring: "The number of connections made to the Postal SMTP server."
 
-      register_prometheus_counter :postal_smtp_server_exceptions_total,
+      register_counter :postal_smtp_server_exceptions_total,
                                   docstring: "The number of server exceptions encountered by the SMTP server",
                                   labels: [:type, :error]
 
-      register_prometheus_counter :postal_smtp_server_tls_connections_total,
+      register_counter :postal_smtp_server_tls_connections_total,
                                   docstring: "The number of successfuly TLS connections established"
 
-      register_prometheus_counter :postal_smtp_server_idle_timeouts_total,
+      register_counter :postal_smtp_server_idle_timeouts_total,
                                   docstring: "The number of connections closed because the client went quiet"
 
-      register_prometheus_counter :postal_smtp_server_connections_refused_total,
+      register_counter :postal_smtp_server_connections_refused_total,
                                   docstring: "The number of connections refused before they were served"
 
-      Client.register_prometheus_metrics
+      Client.register_metrics
     end
 
   end

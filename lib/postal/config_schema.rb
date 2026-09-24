@@ -271,10 +271,13 @@ module Postal
       string :url do
         description "Where the live statistics (the last 60 minutes of message counts, shown on " \
                     "Postal's own dashboard) are kept. The scheme selects the store: 'mysql://' (the " \
-                    "default) keeps them in the message database, 'valkey://host:6379/0' and " \
+                    "default) keeps them in the message database, 'valkey://host:6379/0' " \
+                    "(or 'redis://', or any store speaking the Redis protocol) and " \
                     "'aerospike://host:3000/namespace/set' use an in-memory store, and " \
-                    "'prometheus+http://host:8428' uses a time-series store which can also stream to " \
-                    "the dashboard as messages flow."
+                    "'prometheus+http://host:8428' uses a Prometheus-compatible time-series " \
+                    "store which can also stream to the dashboard as messages flow. The " \
+                    "'influx' and 'json' schemes are write-only: they accept the extract " \
+                    "but cannot be read back by the dashboard."
         default "mysql://"
       end
 
@@ -288,8 +291,8 @@ module Postal
       string :url do
         description "Where Postal pushes metrics and events as they happen, for external dashboards " \
                     "and alerting. The scheme selects the protocol and endpoint: " \
-                    "'prometheus+http://host:8428' (VictoriaMetrics, Prometheus and compatible " \
-                    "stores), 'influx+http://host:8086/database' or " \
+                    "'prometheus+http://host:8428' (a Prometheus-compatible store such as " \
+                    "VictoriaMetrics or Prometheus), 'influx+http://host:8086/database' or " \
                     "'json+http://host:8686' (for example a vector.dev http_server source). Unset to " \
                     "disable telemetry."
       end

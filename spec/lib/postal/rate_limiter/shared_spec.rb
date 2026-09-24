@@ -33,7 +33,7 @@ class FakeRedisConnection
 
 end
 
-describe Postal::RateLimiter::Redis do
+describe Postal::RateLimiter::Shared do
   let(:connection) { FakeRedisConnection.new }
 
   describe "counting" do

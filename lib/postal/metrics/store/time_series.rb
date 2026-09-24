@@ -4,10 +4,11 @@ module Postal
   module Metrics
     module Store
       #
-      # Keeps the live statistics as time series over a text protocol, so the
-      # same store serves the live counters and the longer history, both
-      # queryable with PromQL/MetricsQL. It is the store that live_stats.url
-      # selects for the prometheus, influx and json schemes.
+      # Keeps the live statistics as time series over the Prometheus text
+      # protocol, so the same store serves the live counters and the longer
+      # history, both queryable with PromQL/MetricsQL. It is the store that
+      # live_stats.url selects for the prometheus scheme; the influx and json
+      # schemes are write-only and cannot be read back here.
       #
       class TimeSeries
 

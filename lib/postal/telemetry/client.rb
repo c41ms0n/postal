@@ -50,10 +50,18 @@ module Postal
       end
 
       #
-      # Run an instant PromQL/MetricsQL query. Only meaningful for the
-      # prometheus protocol; the live statistics read back through it.
+      # Run an instant PromQL/MetricsQL query against /api/v1/query. Only
+      # meaningful for the prometheus protocol: InfluxDB and JSON endpoints do
+      # not speak PromQL, so querying through any other scheme raises rather
+      # than posting a query the backend cannot answer. The live statistics
+      # read back through this method, which is why only the prometheus scheme
+      # can serve them.
       #
       def query(promql, time: nil)
+        unless @protocol == "prometheus"
+          raise Postal::Error, "Telemetry queries need the prometheus protocol, not '#{@protocol}'"
+        end
+
         params = { "query" => promql }
         params["time"] = time.to_i.to_s if time
         response = post("/api/v1/query", URI.encode_www_form(params),

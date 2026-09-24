@@ -5,9 +5,11 @@ module Postal
     class LiveStats
 
       #
-      # Keeps the live statistics in the message database.
+      # Keeps the live statistics in the message database, whatever engine it
+      # uses. Named Database rather than after one engine: the SQL goes through
+      # the message database's own dialect.
       #
-      class MySQL
+      class Database
 
         def initialize(database)
           @database = database

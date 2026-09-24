@@ -3,8 +3,8 @@
 module SMTPServer
   class Client
 
-    extend HasPrometheusMetrics
-    include HasPrometheusMetrics
+    extend HasMetrics
+    include HasMetrics
 
     CRAM_MD5_DIGEST = OpenSSL::Digest.new("md5")
     LOG_REDACTION_STRING = "[redacted]"
@@ -819,15 +819,15 @@ module SMTPServer
     end
 
     def increment_error_count(error)
-      increment_prometheus_counter :postal_smtp_server_client_errors, labels: { error: error }
+      increment_counter :postal_smtp_server_client_errors, labels: { error: error }
     end
 
     def increment_command_count(command)
-      increment_prometheus_counter :postal_smtp_server_commands_total, labels: { command: command }
+      increment_counter :postal_smtp_server_commands_total, labels: { command: command }
     end
 
     def increment_message_count(type)
-      increment_prometheus_counter :postal_smtp_server_messages_total, labels: {
+      increment_counter :postal_smtp_server_messages_total, labels: {
         type: type,
         tls: @tls ? "yes" : "no"
       }
@@ -835,16 +835,16 @@ module SMTPServer
 
     class << self
 
-      def register_prometheus_metrics
-        register_prometheus_counter :postal_smtp_server_commands_total,
+      def register_metrics
+        register_counter :postal_smtp_server_commands_total,
                                     docstring: "The number of key commands received by the server",
                                     labels: [:command]
 
-        register_prometheus_counter :postal_smtp_server_client_errors,
+        register_counter :postal_smtp_server_client_errors,
                                     docstring: "The number of errors sent to a client",
                                     labels: [:error]
 
-        register_prometheus_counter :postal_smtp_server_messages_total,
+        register_counter :postal_smtp_server_messages_total,
                                     docstring: "The number of messages accepted by the SMTP server",
                                     labels: [:type, :tls]
       end

@@ -9,9 +9,10 @@ module Postal
     # received and sent in each of the last 60 minutes.
     #
     # The counts are kept in the message database by default. The scheme of
-    # live_stats.url selects another store: an in-memory one (Valkey, Aerospike)
-    # to take the write load off the database, or a time-series one (through the
-    # Prometheus/Influx/JSON protocols) which can also be read by the dashboards.
+    # live_stats.url selects another store: an in-memory one (Valkey, Redis, or
+    # Aerospike) to take the write load off the database, or a
+    # Prometheus-compatible time-series store which can also be read by the
+    # dashboards.
     #
     class LiveStats
 
@@ -86,9 +87,9 @@ module Postal
         uri = URI.parse(Postal::Config.live_stats.url.to_s)
         case self.class.scheme
         when "", "mysql"
-          MySQL.new(@database)
+          Database.new(@database)
         when "valkey", "redis"
-          Valkey.new(uri.to_s)
+          KeyValue.new(uri.to_s)
         when "aerospike"
           Aerospike.new(uri.to_s)
         else

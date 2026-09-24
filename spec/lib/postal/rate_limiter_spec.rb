@@ -220,14 +220,14 @@ module Postal
         allow(Postal::Config.protection).to receive(:counter_store).and_return("redis://example.com:6379/0")
         described_class.reset!
 
-        expect(described_class.store).to be_a(described_class::Redis)
+        expect(described_class.store).to be_a(described_class::Shared)
       end
 
       it "accepts valkey as another name for the shared store" do
         allow(Postal::Config.protection).to receive(:counter_store).and_return("valkey://example.com:6379/0")
         described_class.reset!
 
-        expect(described_class.store).to be_a(described_class::Redis)
+        expect(described_class.store).to be_a(described_class::Shared)
       end
 
       it "refuses a scheme it cannot honour rather than quietly counting locally" do

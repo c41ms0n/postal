@@ -3,8 +3,11 @@
 module Postal
   module RateLimiter
     #
-    # Counters held in Redis or Valkey, shared by every worker so that a limit
-    # applies to the deployment rather than to each process.
+    # Counters held in a store speaking the Redis protocol (Redis, Valkey, and
+    # other drop-in replacements implementing the same commands), shared by
+    # every worker so that a limit applies to the deployment rather than to
+    # each process. Named Shared rather than after one product: the scheme
+    # names the topology, and the protocol is what the code depends on.
     #
     # The window starts at the first counted event and does not slide as further
     # events arrive, which is what the in-process store does too: a limit of ten
@@ -13,7 +16,7 @@ module Postal
     # lifetime and reading that lifetime back are a single script, so a key
     # cannot be left behind without an expiry if the process dies mid-count.
     #
-    class Redis
+    class Shared
 
       # Increment the counter, set the lifetime only when the key is created so
       # the window does not slide, and return both the count and what is left of

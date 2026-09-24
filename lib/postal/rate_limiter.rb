@@ -110,9 +110,10 @@ module Postal
         when "memory"
           Memory.new
         when "redis", "valkey"
-          # redis-client speaks the Redis protocol, which is what Valkey
-          # implements, so the scheme names the store rather than the client.
-          Redis.new(url.sub(/\Avalkey:/, "redis:"))
+          # redis-client speaks the Redis protocol, which is what Valkey and
+          # other drop-in replacements implement, so the scheme names the
+          # topology (shared store) rather than the client.
+          Shared.new(url.sub(/\Avalkey:/, "redis:"))
         else
           raise Error, "protection.counter_store expects a memory://, redis:// or valkey:// URL, " \
                        "not #{url.inspect}"

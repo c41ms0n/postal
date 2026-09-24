@@ -5,14 +5,16 @@ module Postal
     class LiveStats
 
       #
-      # Keeps the live statistics in a Valkey (or Redis) in-memory store. Each
-      # type is counted in one-minute buckets which expire once they fall out of
-      # the 60 minute window, so nothing needs pruning.
+      # Keeps the live statistics in a key-value store speaking the Redis
+      # protocol (Valkey, Redis, and other drop-in replacements that implement
+      # the same commands). Each type is counted in one-minute buckets which
+      # expire once they fall out of the 60 minute window, so nothing needs
+      # pruning.
       #
       # Every operation is a single round trip: the counts for a window are read
       # with one MGET, and the counter and its expiry are written in a pipeline.
       #
-      class Valkey
+      class KeyValue
 
         # One minute buckets only matter for an hour, so expire a little after
         # that to leave room for clock skew between callers.
