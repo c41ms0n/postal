@@ -37,7 +37,7 @@ module SMTPServer
         client.handle("HELO test.example.com")
         client.handle("MAIL FROM: test@test.com")
         client.handle("RCPT TO: #{route.name}@#{route.domain.name}")
-        Timecop.freeze do
+        travel_to Time.now do
           client.handle("DATA")
           expect(client.headers["received"]).to include "from test.example.com (1.2.3.4 [1.2.3.4]) by #{Postal::Config.postal.smtp_hostname} with SMTP; #{Time.now.utc.rfc2822}"
         end
@@ -68,7 +68,7 @@ module SMTPServer
         end
 
         it "logs content" do
-          Timecop.freeze do
+          travel_to Time.now do
             client.handle("DATA")
             client.handle("Subject: Test")
             client.handle("")

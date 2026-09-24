@@ -86,7 +86,7 @@
       You need to add a new TXT record with the name <b>#{@domain.dkim_record_name}</b>
       with the following content.
     = render "dkim_record", :record => @domain.dkim_record, :chunks => @domain.dkim_record_chunks
-    = form_tag [:regenerate_dkim, organization, @server, @domain], :method => :post, :remote => true do
+    = form_with url: [:regenerate_dkim, organization, @server, @domain], method: :post, data: { remote: true } do
       %fieldset.fieldSet
         .fieldSet__field
           = label_tag :dkim_key_size, "Key size", :class => 'fieldSet__label'
@@ -213,7 +213,7 @@
     %p.pageContent__text
       = link_to "Request a certificate", [:request_mta_sts_certificate, organization, @server, @domain], :remote => true, :method => :post, :class => 'button button--neutral'
 
-  = form_tag [:update_mta_sts, organization, @server, @domain], :method => :post, :remote => true do
+  = form_with url: [:update_mta_sts, organization, @server, @domain], method: :post, data: { remote: true } do
     %fieldset.fieldSet
       .fieldSet__field
         = label_tag :mta_sts_mode, "Mode", :class => 'fieldSet__label'

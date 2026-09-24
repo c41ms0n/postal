@@ -454,7 +454,6 @@ GEM
       execjs (>= 0.3.0, < 3)
     thor (1.5.0)
     tilt (2.3.0)
-    timecop (0.9.8)
     timeout (0.6.1)
     tsort (0.2.0)
     turbo-rails (2.0.23)
@@ -547,7 +546,6 @@ DEPENDENCIES
   sprockets-rails
   sqlite3
   terser
-  timecop
   timeout
   turbo-rails (~> 2)
   webmock

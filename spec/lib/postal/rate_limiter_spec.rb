@@ -50,7 +50,7 @@ module Postal
         described_class.check("key", limit: 1, period: 60)
         expect(described_class.check("key", limit: 1, period: 60)).to be_exceeded
 
-        Timecop.travel(Time.now + 61) do
+        travel_to(Time.now + 61) do
           expect(described_class.check("key", limit: 1, period: 60)).to be_allowed
         end
       end
@@ -94,7 +94,7 @@ module Postal
         expect(store.increment("key", limit: 2, period: 60).hits).to eq 1
         expect(store.increment("key", limit: 2, period: 60).hits).to eq 2
 
-        Timecop.travel(Time.now + 61) do
+        travel_to(Time.now + 61) do
           expect(store.increment("key", limit: 2, period: 60).hits).to eq 1
         end
       end
@@ -117,7 +117,7 @@ module Postal
         expect(store.increment("b", limit: 1, period: 60).hits).to eq 1
         expect(store.increment("a", limit: 1, period: 60).hits).to eq 2
 
-        Timecop.travel(Time.now + 61) do
+        travel_to(Time.now + 61) do
           expect(store.increment("a", limit: 1, period: 60).hits).to eq 1
         end
       end

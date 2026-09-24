@@ -9,7 +9,6 @@ require File.expand_path("../config/environment", __dir__)
 require "rspec/rails"
 require "spec_helper"
 require "factory_bot"
-require "timecop"
 require "webmock/rspec"
 require "shoulda-matchers"
 
@@ -34,6 +33,7 @@ RSpec.configure do |config|
   config.infer_spec_type_from_file_location!
   config.include FactoryBot::Syntax::Methods
   config.include GeneralHelpers
+  config.include ActiveSupport::Testing::TimeHelpers
 
   # Before all request specs, set the hostname to the web hostname for
   # Postal otherwise it'll be www.example.com which will fail host
